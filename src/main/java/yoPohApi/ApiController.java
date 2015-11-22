@@ -6,6 +6,7 @@ import com.google.android.gcm.server.Result;
 import com.google.android.gcm.server.Sender;
 import com.mongodb.*;
 import com.mongodb.util.JSON;
+import com.pubnub.api.*;
 import org.bson.BSONObject;
 import org.bson.BasicBSONObject;
 import org.json.JSONArray;
@@ -171,7 +172,7 @@ public class ApiController {
                     customer.setProducts(tempArray);
                 }
                 map.remove("_id");
-                map.put("products",customer.getProducts());
+                map.put("products", customer.getProducts());
                 JSONObject customerJson = new JSONObject(map);
                 object = (DBObject) JSON.parse(customerJson.toString());
                 collection.update(customerBasic, object);
@@ -233,36 +234,41 @@ public class ApiController {
 
     @RequestMapping(value =  "/sendmessage", method = RequestMethod.POST, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
     public boolean pushNotificationToGCM(@ModelAttribute GcmMessage gcmMessage) {
-        final String GCM_API_KEY = "AIzaSyAcWH7TD6k4aJgh5N_hFNJ2socd4AUfyyk";
-        final int retries = 3;
-        Sender sender = new Sender(GCM_API_KEY);
-        Message msg = new Message.Builder().addData("message",gcmMessage.message).build();
-
+        final Pubnub pubnub = new Pubnub("demo-36" /* replace with your publish key */,
+                "demo-36" /* replace with your subscribe key */);
+        PnGcmMessage pnGcmMessage = new PnGcmMessage();
+        JSONObject jso = new JSONObject();
         try {
-            if(!gcmMessage.getGcmRegId().isEmpty()) {
-                Result result = sender.send(msg, gcmMessage.getGcmRegId(), retries);
-                /**
-                 * if you want to send to multiple then use below method
-                 * send(Message message, List<String> regIds, int retries)
-                 **/
+            jso.put("Message", gcmMessage.getMessage());
+            jso.put("Channel",gcmMessage.getChannel());
+        } catch (JSONException e) { }
+        pnGcmMessage.setData(jso);
+        PnMessage message = new PnMessage(
+                pubnub,
+                gcmMessage.getChannel(),
+                new Callback() {
+                    @Override
+                    public void successCallback(String s, Object o) {
+                        super.successCallback(s, o);
+                    }
 
-
-                if (!result.getErrorCodeName().isEmpty()) {
-                    System.out.println("GCM Notification is sent successfully" + result.toString());
-                    return true;
-                }
-
-                System.out.println("Error occurred while sending push notification :" + result.getErrorCodeName());
-
-            }
-        } catch (InvalidRequestException e) {
-            System.out.println("Invalid Request");
-        } catch (IOException e) {
-            System.out.println("IO Exception");
+                    @Override
+                    public void errorCallback(String s, PubnubError pubnubError) {
+                        super.errorCallback(s, pubnubError);
+                    }
+                },
+                pnGcmMessage);
+        try {
+            message.publish();
+        } catch (PubnubException e) {
+            e.printStackTrace();
         }
+
         return false;
 
     }
+
+
 
     @RequestMapping(value="/get/customer", method=RequestMethod.GET)
     public ResponseEntity<Map> getCustomer(@RequestParam("customerId") String customerId) throws UnknownHostException {
@@ -282,13 +288,13 @@ public class ApiController {
     }
 
     @RequestMapping(value = "/get/acceptcomplaint", method = RequestMethod.GET)
-    public void acceptTicket(@RequestParam("ticketNumber") long ticketNumber) throws UnknownHostException{
+    public void acceptTicket(@RequestParam("channel") String channel) throws UnknownHostException{
         MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
         DB database = mongoClient.getDB(Constants.DB_NAME);
         DBCollection collection = database.getCollection(Constants.COMPLAINT_TABLE);
-        if(ticketNumber!=0){
+        if(channel!=null && !channel.isEmpty()){
             BasicDBObject complaint = new BasicDBObject();
-            complaint.put("ticketNumber", ticketNumber);
+            complaint.put("channel", channel);
             DBObject object = collection.findOne(complaint);
             Map map = object.toMap();
             String customerId = (String) map.get("customerId");
@@ -302,30 +308,36 @@ public class ApiController {
     }
 
     @RequestMapping(value = "/get/generatecomplaint", method = RequestMethod.GET)
-    public ResponseEntity<Complaint> generateTicket(@RequestParam("productId") String productName,
+    public ResponseEntity<Complaint> generateTicket(@RequestParam("productId") String productId,
                                               @RequestParam("customerId") String customerId,
                                               @RequestParam("companyId") String companyId
                                               ) throws UnknownHostException {
         MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
         DB database = mongoClient.getDB(Constants.DB_NAME);
-        DBCollection collection = database.getCollection(Constants.COMPLAINT_TABLE);
-
+        DBCollection collection = database.getCollection(Constants.CUSTOMER_TABLE);
         Complaint complaint = new Complaint();
-        complaint.setCustomerId(customerId);
-        complaint.setDateCreated(System.currentTimeMillis());
-        collection = database.getCollection(Constants.PRODUCT_TABLE);
 
         BasicDBObject dbObject = new BasicDBObject();
-        dbObject.put("productName",productName);
+        dbObject.put("customerId",customerId);
         DBObject object = collection.findOne(dbObject);
         Map map = object.toMap();
-        String productId = (String) map.get("productId");
-        complaint.setProductId(productId);
+        complaint.setCustomerName((String) map.get("name"));
+
+        collection = database.getCollection(Constants.PRODUCT_TABLE);
+        dbObject.clear();
+        dbObject.put("productId", productId);
+        object= collection.findOne(dbObject);
+        map = object.toMap();
+        complaint.setProductName((String) map.get("productName"));
+
+        complaint.setCustomerId(customerId);
+        complaint.setDateCreated(System.currentTimeMillis());
 
         complaint.setCompanyId(companyId);
+        complaint.setProductId(productId);
 
         complaint.setTicketNumber(ticketNumber.getAndIncrement());
-
+        complaint.setChannel(UUID.randomUUID().toString());
         collection = database.getCollection(Constants.COMPLAINT_TABLE);
         JSONObject customerJson = new JSONObject(complaint);
         object = (DBObject) JSON.parse(customerJson.toString());
@@ -361,6 +373,37 @@ public class ApiController {
             complaint.setCustomerId((String) map.get("customerId"));
             complaint.setProductId((String) map.get("productid"));
             complaint.setTicketNumber((long) map.get("ticketNumber"));
+            complaint.setChannel((String) map.get("channel"));
+            complaint.setCustomerName((String) map.get("customerName"));
+            complaint.setProductName((String) map.get("productName"));
+            complaintArrayList.add(complaint);
+        }
+        mongoClient.close();
+        return new ResponseEntity<ArrayList<Complaint>>(complaintArrayList, HttpStatus.OK);
+    }
+
+    @RequestMapping(value = "/get/mytickets", method = RequestMethod.GET)
+    public ResponseEntity<ArrayList<Complaint>> getMyTickets(@RequestParam("customerId") String customerId) throws UnknownHostException {
+        MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
+        DB database = mongoClient.getDB(Constants.DB_NAME);
+        DBCollection collection = database.getCollection(Constants.COMPLAINT_TABLE);
+
+        BasicDBObject dbObject = new BasicDBObject();
+        dbObject.put("customerId",customerId);
+        DBCursor cursor = collection.find(dbObject);
+        ArrayList<Complaint> complaintArrayList = new ArrayList<>();
+        while(cursor.hasNext()){
+            DBObject object = cursor.next();
+            Map map = cursor.next().toMap();
+            map.remove("_id");
+            Complaint complaint = new Complaint();
+            complaint.setCompanyId((String) map.get("companyId"));
+            complaint.setCustomerId((String) map.get("customerId"));
+            complaint.setProductId((String) map.get("productid"));
+            complaint.setTicketNumber((long) map.get("ticketNumber"));
+            complaint.setChannel((String) map.get("channel"));
+            complaint.setCustomerName((String) map.get("customerName"));
+            complaint.setProductName((String) map.get("productName"));
             complaintArrayList.add(complaint);
         }
         mongoClient.close();
