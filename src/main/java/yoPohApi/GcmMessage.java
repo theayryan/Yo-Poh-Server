@@ -13,16 +13,16 @@ public class GcmMessage {
         return gcmRegId;
     }
 
+    public void setGcmRegId(String gcmRegId) {
+        this.gcmRegId = gcmRegId;
+    }
+
     public String getMessage() {
         return message;
     }
 
     public void setMessage(String message) {
         this.message = message;
-    }
-
-    public void setGcmRegId(String gcmRegId) {
-        this.gcmRegId = gcmRegId;
     }
 
     public String getChannel() {
