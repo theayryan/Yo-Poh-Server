@@ -1,5 +1,7 @@
 package yoPohApi.YoPohClasses;
 
+import org.json.JSONArray;
+
 import java.io.Serializable;
 import java.util.ArrayList;
 
@@ -13,7 +15,7 @@ public class Customer implements Serializable {
     String phoneNum;
     String customerId;
     String emailId;
-    ArrayList<Product> products = new ArrayList<>();
+    String[] products = new String[10];
 
     public Customer(){}
 
@@ -45,7 +47,7 @@ public class Customer implements Serializable {
         this.phoneNum = phoneNum;
     }
 
-    public void setProducts(ArrayList<Product> products) {
+    public void setProducts(String[] products) {
         this.products = products;
     }
 
@@ -69,7 +71,7 @@ public class Customer implements Serializable {
         return phoneNum;
     }
 
-    public ArrayList<Product> getProducts() {
+    public String[] getProducts() {
         return products;
     }
 }

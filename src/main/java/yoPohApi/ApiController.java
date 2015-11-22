@@ -6,8 +6,13 @@ import com.google.android.gcm.server.Result;
 import com.google.android.gcm.server.Sender;
 import com.mongodb.*;
 import com.mongodb.util.JSON;
+import org.bson.BSONObject;
+import org.bson.BasicBSONObject;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
+import org.springframework.boot.json.GsonJsonParser;
+import org.springframework.boot.json.JacksonJsonParser;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +22,7 @@ import yoPohApi.YoPohClasses.*;
 import java.io.IOException;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
@@ -52,10 +58,12 @@ public class ApiController {
                 map.put("emailId", customer.getEmailId());
                 map.put("phoneNum", customer.getPhoneNum());
                 map.put("address", customer.getAddress());
+                map.put("products",new String[0]);
                 object.putAll(map);
                 collection.update(customerBasic, object);
             }
             else{
+                customer.setProducts(new String[0]);
                 JSONObject customerJson = new JSONObject(customer);
                 object = (DBObject) JSON.parse(customerJson.toString());
                 collection.insert(object);
@@ -133,7 +141,8 @@ public class ApiController {
         return new ResponseEntity<CustomerCareExec>(customerCareExec, HttpStatus.OK);
     }
 
-    public void addProductToCustomer(String customerId, Product product) throws UnknownHostException {
+    @RequestMapping(value = "/get/addtomyproducts", method = RequestMethod.GET)
+    public ResponseEntity<Customer> addProductToCustomer(@RequestParam("customerId") String customerId, @RequestParam("productId") String productId) throws UnknownHostException {
         MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
         DB database = mongoClient.getDB(Constants.DB_NAME);
         DBCollection collection = database.getCollection(Constants.CUSTOMER_TABLE);
@@ -141,31 +150,40 @@ public class ApiController {
 
         if(customerId!=null) {
             BasicDBObject customerBasic = new BasicDBObject();
-            customerBasic.put("customerId", customer.getCustomerId());
+            customerBasic.put("customerId", customerId);
             DBObject object = collection.findOne(customerBasic);
-            DBObject old = object;
             if(object!=null) {
                 Map map = object.toMap();
-                customer.setAddress((String)map.get("address"));
+                customer.setAddress((String) map.get("address"));
                 customer.setName((String) map.get("name"));
                 customer.setCustomerId((String) map.get("customerId"));
                 customer.setPhoneNum((String) map.get("phoneNum"));
-                customer.setEmailId((String) map.get("email"));
-                if(map.get("products")==null){
-                    customer.setProducts(new ArrayList<>());
-                    customer.getProducts().add(product);
+                customer.setEmailId((String) map.get("emailId"));
+                BasicDBList products = (BasicDBList) map.get("products");
+                if(products.size()==0){
+                    customer.setProducts(new String[]{productId});
                 }
-                JSONObject customerJson = new JSONObject(customer);
+                else {
+                    String[] tempArray = new String[products.size()+1];
+                    for(int i=0;i<products.size();i++)
+                        tempArray[i] = products.get(i).toString();
+                    tempArray[tempArray.length-1]=productId;
+                    customer.setProducts(tempArray);
+                }
+                map.remove("_id");
+                map.put("products",customer.getProducts());
+                JSONObject customerJson = new JSONObject(map);
                 object = (DBObject) JSON.parse(customerJson.toString());
                 collection.update(customerBasic, object);
             }
         }
         mongoClient.close();
+        return new ResponseEntity<Customer>(customer,HttpStatus.OK);
     }
 
 
     @RequestMapping(value = "/post/product", method= RequestMethod.POST, consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
-    public ResponseEntity<Product> postProduct(@ModelAttribute Product product, @RequestParam String customerId) throws UnknownHostException {
+    public ResponseEntity<Product> postProduct(@ModelAttribute Product product) throws UnknownHostException {
         MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
         DB database = mongoClient.getDB(Constants.DB_NAME);
         DBCollection collection = database.getCollection(Constants.PRODUCT_TABLE);
@@ -199,7 +217,7 @@ public class ApiController {
             }
         }
         mongoClient.close();
-        addProductToCustomer(customerId,product);
+
         return new ResponseEntity<Product>(product, HttpStatus.OK);
     }
 
@@ -286,7 +304,7 @@ public class ApiController {
     @RequestMapping(value = "/get/generatecomplaint", method = RequestMethod.GET)
     public ResponseEntity<Complaint> generateTicket(@RequestParam("productId") String productName,
                                               @RequestParam("customerId") String customerId,
-                                              @RequestParam("companyName") String companyName
+                                              @RequestParam("companyId") String companyId
                                               ) throws UnknownHostException {
         MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
         DB database = mongoClient.getDB(Constants.DB_NAME);
@@ -304,12 +322,6 @@ public class ApiController {
         String productId = (String) map.get("productId");
         complaint.setProductId(productId);
 
-        dbObject.clear();
-        dbObject.put("companyName", companyName);
-        collection = database.getCollection(Constants.COMPANY_TABLE);
-        object = collection.findOne(dbObject);
-        map = object.toMap();
-        String companyId = (String) map.get("companyId");
         complaint.setCompanyId(companyId);
 
         complaint.setTicketNumber(ticketNumber.getAndIncrement());
@@ -374,4 +386,59 @@ public class ApiController {
         mongoClient.close();
         return new ResponseEntity<ArrayList<Company>>(companyArrayList, HttpStatus.OK);
     }
+
+    @RequestMapping(value = "/get/allproducts", method = RequestMethod.GET)
+    public ResponseEntity<ArrayList<Product>> getAllProducts() throws UnknownHostException {
+        MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
+        DB database = mongoClient.getDB(Constants.DB_NAME);
+
+            DBCollection collection = database.getCollection(Constants.PRODUCT_TABLE);
+            DBCursor cursor = collection.find();
+            ArrayList<Product> productArrayList = new ArrayList<>();
+            while(cursor.hasNext()) {
+                Map map = cursor.next().toMap();
+                map.remove("_id");
+                Product product = new Product();
+                product.setProductName((String) map.get("productName"));
+                product.setProductId((String) map.get("productId"));
+                product.setCompanyId((String) map.get("companyId"));
+                product.setPrice((String) map.get("price"));
+                product.setCategory((String) map.get("price"));
+                productArrayList.add(product);
+            }
+
+        return new ResponseEntity<ArrayList<Product>>(productArrayList, HttpStatus.OK);
+    }
+
+
+
+
+    @RequestMapping(value = "/get/myproducts", method = RequestMethod.GET)
+    public ResponseEntity<ArrayList<Product>> getMyProducts(@RequestParam("customerId") String customerId) throws UnknownHostException {
+        MongoClient mongoClient = new MongoClient(new MongoClientURI("mongodb://localhost:27017"));
+        DB database = mongoClient.getDB(Constants.DB_NAME);
+        DBCollection collection = database.getCollection(Constants.CUSTOMER_TABLE);
+        BasicDBObject customerBasic = new BasicDBObject();
+        customerBasic.put("customerId", customerId);
+        DBObject object = collection.findOne(customerBasic);
+        Map map = object.toMap();
+        ArrayList<Product> products = new ArrayList<>();
+        BasicDBList productNames =(BasicDBList) object.get("products");
+        Iterator iter = productNames.iterator();
+        while (iter.hasNext()){
+            collection = database.getCollection(Constants.PRODUCT_TABLE);
+            BasicDBObject productObject = new BasicDBObject();
+            productObject.put("productId", iter.next().toString());
+            object = collection.findOne(productObject);
+            Product product = new Product();
+            product.setCategory((String) object.get("category"));
+            product.setCompanyId((String) object.get("companyId"));
+            product.setPrice((String) object.get("price"));
+            product.setProductId((String) object.get("productId"));
+            product.setProductName((String) object.get("productName"));
+            products.add(product);
+        }
+        return new ResponseEntity<ArrayList<Product>>(products, HttpStatus.OK);
+    }
+
 }
